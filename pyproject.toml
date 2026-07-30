@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appforge"
+version = "0.1.0"
+description = "Ek command se koi bhi app banane wala AI CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+appforge = "appforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["appforge*"]
+
+[tool.setuptools.package-data]
+appforge = ["templates/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
