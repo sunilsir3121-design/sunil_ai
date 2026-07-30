@@ -6,6 +6,8 @@ AppForge use workspace ke andar chalata hai aur result wapas model ko feed karta
 
 from __future__ import annotations
 
+import ast
+import builtins
 import json
 import subprocess
 import time
@@ -92,7 +94,7 @@ class Step:
     ok: bool
     output: str
 
-    def as_history(self, limit: int = 1200) -> str:
+    def as_history(self, limit: int = 700) -> str:
         output = self.output.strip()
         if len(output) > limit:
             output = output[:limit] + f"\n...[{len(output) - limit} more chars]"
@@ -168,7 +170,7 @@ class Agent:
         return run
 
     def _next_action(self, task: str, run: AgentRun) -> dict[str, Any]:
-        history = "\n\n".join(step.as_history() for step in run.steps[-8:]) or "(abhi kuch nahi)"
+        history = "\n\n".join(step.as_history() for step in run.steps[-4:]) or "(abhi kuch nahi)"
         message = TASK_TEMPLATE.format(
             task=task.strip(),
             workspace=self.workspace,
@@ -234,10 +236,34 @@ class Agent:
         target.write_text(content, encoding="utf-8")
         lines = content.count("\n") + 1
 
-        problem = _python_syntax_error(path, content)
+        problem = _python_syntax_error(path, content) or self._missing_import(path, content)
         if problem:
             return Step(index, thought, "write_file", path, False, problem)
         return Step(index, thought, "write_file", path, True, f"{lines} lines likhi")
+
+    def _missing_import(self, path: str, content: str) -> str | None:
+        """Sabse common bug: test file jis function ko test karti hai use import hi nahi karti."""
+        if not path.endswith(".py"):
+            return None
+        unresolved = _unresolved_names(content)
+        if not unresolved:
+            return None
+        for other in self._workspace_files():
+            if not other.endswith(".py") or other == path:
+                continue
+            try:
+                exported = _module_level_names((self.workspace / other).read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+            shared = sorted(unresolved & exported)
+            if shared:
+                module = other[:-3].replace("/", ".")
+                names = ", ".join(shared)
+                return (
+                    f"{names} kahin se import nahi hua — file ke top par "
+                    f"`from {module} import {names}` add karo"
+                )
+        return None
 
     def _read_file(self, index: int, thought: str, action: dict[str, Any]) -> Step:
         path = str(action.get("path", "")).strip()
@@ -277,7 +303,7 @@ class Agent:
             return Step(index, thought, "run", detail, False, f"{output}\n\n({complaint})")
         return Step(index, thought, "run", detail, ok, output)
 
-    def _file_contents(self, max_files: int = 6, budget: int = 8000) -> str:
+    def _file_contents(self, max_files: int = 6, budget: int = 4000) -> str:
         """Chhote model ko yaad nahi rehta ki usne kya likha — files dikha dete hain."""
         chunks: list[str] = []
         used = 0
@@ -349,6 +375,43 @@ def _test_output_problem(output: str) -> str | None:
     return None
 
 
+def _unresolved_names(content: str) -> set[str]:
+    """Jo naam use hue par kahin bind nahi hue (na import, na def, na assignment)."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return set()
+
+    bound: set[str] = set(dir(builtins))
+    used: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            (used if isinstance(node.ctx, ast.Load) else bound).add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, ast.alias):
+            bound.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, ast.Global):
+            bound.update(node.names)
+    return used - bound
+
+
+def _module_level_names(content: str) -> set[str]:
+    """Ek module top level par kya-kya export karta hai."""
+    tree = ast.parse(content)
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
 def _python_syntax_error(path: str, content: str) -> str | None:
     if not path.endswith(".py"):
         return None
@@ -382,12 +445,26 @@ def _rewrites_without_running(steps: list[Step], path: str) -> int:
 def _loop_warnings(steps: list[Step]) -> str:
     """Chhote models loop me phas jate hain — unhe saaf-saaf bata dete hain."""
     lines: list[str] = []
-    failed = Counter(
-        step.detail.split(" (")[0] for step in steps if step.action == "run" and not step.ok
-    )
-    for command, count in failed.items():
+    since_write = steps[_last_write_index(steps) + 1 :]
+    commands = [
+        (step.detail.split(" (")[0], step.ok) for step in since_write if step.action == "run"
+    ]
+
+    for command, count in Counter(cmd for cmd, ok in commands if not ok).items():
         if count >= 2:
-            lines.append(f"- `{command}` {count} baar fail ho chuki hai. Ise dobara mat chalao.")
+            lines.append(
+                f"- `{command}` {count} baar fail hui hai aur beech me koi file nahi badli. "
+                "Pehle code theek karo, tab chalao."
+            )
+    for command, count in Counter(cmd for cmd, ok in commands if ok).items():
+        if count >= 2:
+            lines.append(
+                f"- `{command}` {count} baar pass ho chuki hai. Ab agla kaam karo ya finish karo."
+            )
+
+    stale = _stale_failure(steps)
+    if stale:
+        lines.append(f"- Code badal chuka hai: `{stale}` ab dobara chalakar dekho.")
 
     writes = Counter(step.detail for step in steps if step.action == "write_file" and step.ok)
     for path, count in writes.items():
@@ -399,6 +476,29 @@ def _loop_warnings(steps: list[Step]) -> str:
     if not lines:
         return ""
     return "\nWARNINGS:\n" + "\n".join(lines) + "\n"
+
+
+def _last_write_index(steps: list[Step]) -> int:
+    for i in range(len(steps) - 1, -1, -1):
+        if steps[i].action == "write_file" and steps[i].ok:
+            return i
+    return -1
+
+
+def _stale_failure(steps: list[Step]) -> str | None:
+    """Jo command fail hui thi, uske baad file badli ho to usko dobara chalana chahiye."""
+    write_at = _last_write_index(steps)
+    if write_at < 0:
+        return None
+    for step in reversed(steps[:write_at]):
+        if step.action == "run" and not step.ok:
+            command = step.detail.split(" (")[0]
+            already_retried = any(
+                later.action == "run" and later.detail.startswith(command)
+                for later in steps[write_at + 1 :]
+            )
+            return None if already_retried else command
+    return None
 
 
 def _stream_print(text: str) -> None:

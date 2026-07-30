@@ -261,6 +261,34 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(run.steps[4].ok, "run ke baad likhna phir se allowed hai")
             self.assertEqual((Path(tmp) / "x.py").read_text(), "a = 4\n")
 
+    def test_missing_import_is_caught_before_running(self):
+        actions = [
+            {"thought": "module", "action": "write_file", "path": "fizzbuzz.py",
+             "content": "def fizzbuzz(n):\n    return [str(i) for i in range(1, n + 1)]\n"},
+            {"thought": "test bina import", "action": "write_file", "path": "test_fizzbuzz.py",
+             "content": (
+                 "import unittest\n\n\nclass T(unittest.TestCase):\n"
+                 "    def test_one(self):\n        self.assertEqual(fizzbuzz(1), ['1'])\n"
+             )},
+            {"thought": "import ke saath", "action": "write_file", "path": "test_fizzbuzz.py",
+             "content": (
+                 "import unittest\n\nfrom fizzbuzz import fizzbuzz\n\n\n"
+                 "class T(unittest.TestCase):\n"
+                 "    def test_one(self):\n        self.assertEqual(fizzbuzz(1), ['1'])\n"
+             )},
+            {"thought": "chalao", "action": "run", "command": "python3 -m unittest -q"},
+            {"thought": "bas", "action": "finish", "summary": "tests pass"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            agent, _ = make_agent(tmp, actions)
+            run = agent.run("fizzbuzz aur tests banao")
+
+            self.assertFalse(run.steps[1].ok)
+            self.assertIn("from fizzbuzz import fizzbuzz", run.steps[1].output)
+            self.assertTrue(run.steps[2].ok)
+            self.assertTrue(run.steps[3].ok)
+            self.assertTrue(run.finished)
+
     def test_hidden_test_failure_is_caught(self):
         script = (
             "import unittest\n\n\n"
@@ -306,7 +334,32 @@ class VerificationTests(unittest.TestCase):
             agent.run("kuch chalao")
 
             self.assertIn("WARNINGS", client.prompts[-1])
-            self.assertIn("dobara mat chalao", client.prompts[-1])
+            self.assertIn("fail hui hai aur beech me koi file nahi badli", client.prompts[-1])
+
+    def test_retry_hint_after_code_change(self):
+        actions = [
+            {"thought": "1", "action": "run", "command": "python3 -m unittest -q"},
+            {"thought": "2", "action": "write_file", "path": "fix.py", "content": "x = 1\n"},
+            {"thought": "3", "action": "list_files"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            agent, client = make_agent(tmp, actions, max_steps=3)
+            agent.run("tests theek karo")
+
+            self.assertIn("Code badal chuka hai", client.prompts[-1])
+            self.assertIn("python3 -m unittest -q", client.prompts[-1])
+
+    def test_repeated_passing_command_warning(self):
+        actions = [
+            {"thought": "1", "action": "run", "command": "echo hi"},
+            {"thought": "2", "action": "run", "command": "echo hi"},
+            {"thought": "3", "action": "list_files"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            agent, client = make_agent(tmp, actions, max_steps=3)
+            agent.run("kuch chalao")
+
+            self.assertIn("pass ho chuki hai", client.prompts[-1])
 
 
 class AgentCliTests(unittest.TestCase):

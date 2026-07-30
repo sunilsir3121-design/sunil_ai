@@ -57,6 +57,13 @@ chalakar dikhaya na ho.
 
 Options: `-C DIR`, `--model M`, `--max-steps N`, `--timeout SEC`, `--ask`.
 
+Agent mode model par sabse zyada depend karta hai. 3B model chhote kaam theek karta hai;
+bade multi-file task ke liye `ollama pull qwen2.5-coder:7b` (ya 14B, agar RAM ho) behtar hai:
+
+```bash
+appforge agent "..." --model qwen2.5-coder:7b
+```
+
 ## Teen modes
 
 | Mode         | Kab chalta hai                          | Kya karta hai                                     |
