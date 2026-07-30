@@ -8,7 +8,15 @@ import sys
 from pathlib import Path
 
 from appforge import ai, naming, templates
-from appforge.providers import PROVIDERS, LLMClient, ProviderError, api_key_for, detect_provider
+from appforge.providers import (
+    PROVIDERS,
+    LLMClient,
+    ProviderError,
+    api_key_for,
+    detect_provider,
+    ollama_host,
+    ollama_models,
+)
 from appforge.spec import AppSpec, SpecError
 from appforge.writer import WriteError, run_command, write_spec
 
@@ -40,7 +48,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="app spec JSON me print karo")
     parser.add_argument("--run", action="store_true", help="banane ke baad app chalao")
     parser.add_argument("--list-templates", action="store_true", help="offline templates dikhao")
+    parser.add_argument("--status", action="store_true", help="kaunsa AI available hai, dikhao")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="AI fail ho to template par mat girna, error do",
+    )
     return parser
+
+
+OLLAMA_HELP = (
+    "Local AI (Ollama) nahi mila. Install: `curl -fsSL https://ollama.com/install.sh | sh`, "
+    "phir `ollama pull qwen2.5-coder:3b`. Ya `--offline` se templates use karein."
+)
+
+
+def make_client(provider: str, model: str | None) -> LLMClient:
+    config = PROVIDERS[provider]
+    if config.local:
+        if not ollama_models():
+            raise ProviderError(OLLAMA_HELP)
+        return LLMClient(provider=provider, model=model, progress=sys.stderr.isatty())
+
+    key = api_key_for(config)
+    if key is None:
+        env_names = " / ".join(config.env_vars)
+        raise ProviderError(f"{provider} ke liye API key nahi mili (set {env_names})")
+    return LLMClient(provider=provider, api_key=key, model=model)
 
 
 def generate(args: argparse.Namespace, prompt: str) -> tuple[AppSpec, str]:
@@ -52,13 +86,30 @@ def generate(args: argparse.Namespace, prompt: str) -> tuple[AppSpec, str]:
     if provider is None:
         return templates.build_spec(prompt, args.kind), "offline"
 
-    key = api_key_for(PROVIDERS[provider])
-    if key is None:
-        env_names = " / ".join(PROVIDERS[provider].env_vars)
-        raise ProviderError(f"{provider} ke liye API key nahi mili (set {env_names})")
+    client = make_client(provider, args.model)
+    if PROVIDERS[provider].local:
+        print(f"local AI ({client.model}) soch raha hai... thoda time lagega", file=sys.stderr)
 
-    client = LLMClient(provider=provider, api_key=key, model=args.model)
-    return ai.build_spec(client, prompt, naming.project_name(prompt)), f"ai:{provider}"
+    try:
+        spec = ai.build_spec(client, prompt, naming.project_name(prompt))
+    except (ProviderError, SpecError) as exc:
+        if args.strict:
+            raise
+        print(f"warning: AI se app nahi bana ({exc}) — template se bana raha hoon", file=sys.stderr)
+        return templates.build_spec(prompt, args.kind), "offline (AI fallback)"
+    return spec, f"ai:{provider} ({client.model})"
+
+
+def print_status() -> None:
+    provider = detect_provider()
+    print(f"provider : {provider or 'koi nahi (offline templates)'}")
+    models = ollama_models()
+    print(f"ollama   : {ollama_host()} — {', '.join(models) if models else 'nahi chal raha'}")
+    for name, config in PROVIDERS.items():
+        if config.local:
+            continue
+        state = "key mili" if api_key_for(config) else "key nahi"
+        print(f"{name:<9}: {state} ({' / '.join(config.env_vars)})")
 
 
 def print_plan(spec: AppSpec, mode: str, out_dir: Path) -> None:
@@ -83,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_templates:
         for kind in sorted(templates.KINDS):
             print(f"{kind:<8} {', '.join(templates.KIND_KEYWORDS[kind])}")
+        return 0
+
+    if args.status:
+        print_status()
         return 0
 
     prompt = " ".join(args.prompt).strip()

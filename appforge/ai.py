@@ -33,6 +33,8 @@ Rules:
 - Never invent API keys or paid services unless the user explicitly asks for them.
 - Include a README.md that explains how to run the app.
 - Paths must be relative and must never start with '/' or contain '..'.
+- Besides README.md there must be at least one real source file with working code.
+- install_cmd must be null unless a file actually declares those dependencies.
 """
 
 USER_TEMPLATE = """Build this app:
@@ -42,11 +44,74 @@ USER_TEMPLATE = """Build this app:
 Target directory name: {name}
 """
 
+RETRY_TEMPLATE = """{original}
 
-def build_spec(client: ChatClient, prompt: str, name: str) -> AppSpec:
-    """Ask the model for an app and parse it into an AppSpec."""
-    text = client.complete(SYSTEM_PROMPT, USER_TEMPLATE.format(prompt=prompt.strip(), name=name))
-    return AppSpec.from_dict(parse_spec_json(text))
+Your previous answer was rejected: {problem}
+Return the corrected JSON object only, with every source file fully written out.
+"""
+
+CODE_SUFFIXES = (
+    ".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".py", ".json", ".sh",
+    ".go", ".rs", ".java", ".rb", ".php", ".vue", ".svelte", ".toml", ".yml", ".yaml",
+)
+
+
+def build_spec(client: ChatClient, prompt: str, name: str, attempts: int = 2) -> AppSpec:
+    """Ask the model for an app, retrying once if the reply is unusable."""
+    user = USER_TEMPLATE.format(prompt=prompt.strip(), name=name)
+    last_error: SpecError | None = None
+    for attempt in range(max(1, attempts)):
+        message = user if attempt == 0 else RETRY_TEMPLATE.format(original=user, problem=last_error)
+        try:
+            spec = AppSpec.from_dict(parse_spec_json(client.complete(SYSTEM_PROMPT, message)))
+            validate_spec(spec)
+            return sanitize_commands(spec)
+        except SpecError as exc:
+            last_error = exc
+    raise last_error if last_error else SpecError("model se app spec nahi mila")
+
+
+def validate_spec(spec: AppSpec) -> None:
+    """Reject replies that describe an app instead of writing it."""
+    code_files = [
+        file
+        for file in spec.files
+        if file.path.lower() != "readme.md" and file.path.lower().endswith(CODE_SUFFIXES)
+    ]
+    if not code_files:
+        raise SpecError("README ke alawa koi source file nahi hai")
+    if not any(len(file.content.strip()) >= 40 for file in code_files):
+        raise SpecError("source files khaali ya adhoori hain")
+
+
+NODE_COMMANDS = ("npm", "yarn", "pnpm", "npx")
+STATIC_RUN_CMD = "python3 -m http.server 8000"
+
+
+def sanitize_commands(spec: AppSpec) -> AppSpec:
+    """Drop install/run commands jinke liye zaroori files hi nahi hain."""
+    paths = {file.path.lower() for file in spec.files}
+    has_node = "package.json" in paths
+    has_index = "index.html" in paths
+
+    if spec.install_cmd:
+        first = spec.install_cmd.split()[0]
+        needs_node = first in NODE_COMMANDS and not has_node
+        needs_reqs = "requirements.txt" in spec.install_cmd and "requirements.txt" not in paths
+        if needs_node or needs_reqs:
+            spec.install_cmd = None
+
+    if spec.run_cmd:
+        first = spec.run_cmd.split()[0]
+        broken_node = first in NODE_COMMANDS and not has_node
+        opens_file = first in {"open", "xdg-open", "start"}
+        if (broken_node or opens_file) and has_index:
+            spec.run_cmd = STATIC_RUN_CMD
+            spec.notes.append("Browser me http://localhost:8000 kholein.")
+        elif broken_node or opens_file:
+            spec.run_cmd = None
+
+    return spec
 
 
 def parse_spec_json(text: str) -> dict[str, Any]:

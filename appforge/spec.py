@@ -10,6 +10,33 @@ class SpecError(ValueError):
     """Raised when a model or template produces an unusable app spec."""
 
 
+# Ollama/OpenAI ko structured output ke liye diya jata hai taaki chhote local models
+# bhi sirf README ki jagah poori files bhejein.
+JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "description": {"type": "string"},
+        "files": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+        "install_cmd": {"type": ["string", "null"]},
+        "run_cmd": {"type": ["string", "null"]},
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["name", "description", "files", "run_cmd"],
+}
+
+
 @dataclass(frozen=True)
 class GeneratedFile:
     path: str

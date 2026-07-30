@@ -11,34 +11,55 @@ appforge "expenses ke liye REST api banao" -o ~/projects/expenses
 AppForge aapke prompt ko ek poore project me badal deta hai — saari files, ek README,
 aur chalane ki command. Prompt Hindi, English ya Hinglish, kisi me bhi likh sakte hain.
 
-## Do modes
+**Poori tarah private:** AI aapke apne computer par chalta hai (Ollama). Koi API key nahi,
+koi subscription nahi, aur aapka code kahin bahar nahi jata.
 
-| Mode        | Kab chalta hai                        | Kya karta hai                                   |
-| ----------- | ------------------------------------- | ----------------------------------------------- |
-| **AI**      | env me LLM API key mile               | model se poora custom project generate hota hai |
-| **Offline** | key na ho, ya `--offline` diya ho     | built-in templates se chalta-phirta app banta hai |
-
-Dono modes bilkul ek jaisa output dete hain, isliye bina key ke bhi CLI kaam karta hai.
-
-## Install
+## Setup (ek baar)
 
 ```bash
 git clone <this-repo> && cd appforge
-pip install -e .
+./install.sh
 ```
 
-Koi runtime dependency nahi hai — sirf Python 3.9+.
+`install.sh` Ollama install karta hai, ek free coding model (`qwen2.5-coder:3b`, ~2 GB)
+pull karta hai, aur `appforge` command install kar deta hai. Python 3.9+ ke alawa koi
+runtime dependency nahi hai.
 
-## API key (optional, AI mode ke liye)
+Sab theek hai ya nahi:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...      # ya
-export OPENAI_API_KEY=sk-...         # ya
-export GEMINI_API_KEY=...
+appforge --status
 ```
 
-Key set karte hi AI mode apne aap on ho jata hai. Provider force karna ho to
-`--provider openai` ya `APPFORGE_PROVIDER=openai`.
+## Teen modes
+
+| Mode         | Kab chalta hai                          | Kya karta hai                                     |
+| ------------ | --------------------------------------- | ------------------------------------------------- |
+| **Local AI** | Ollama chal raha ho (default)           | aapke PC par model se poora custom project banta hai |
+| **Cloud AI** | koi API key env me set ho               | Anthropic / OpenAI / Gemini se project banta hai   |
+| **Offline**  | AI available na ho, ya `--offline`      | built-in templates se turant app banta hai         |
+
+Agar local model kharaab jawab de (jaise sirf README), AppForge ek baar dobara try karta
+hai aur phir bhi na bane to template par gir jata hai — output hamesha chalne wala app hota
+hai. `--strict` se ye fallback band ho jata hai.
+
+## Model badalna
+
+```bash
+ollama pull qwen2.5-coder:7b        # bada model = behtar code (zyada RAM)
+appforge "..." --model qwen3:4b     # ek baar ke liye
+export APPFORGE_MODEL=qwen3:4b      # hamesha ke liye
+```
+
+Jo model pehle se pulled hai wahi apne aap chun liya jata hai. Doosre PC par chal rahe
+Ollama ko use karna ho to `export OLLAMA_HOST=192.168.1.5:11434`.
+
+## Cloud key (optional)
+
+```bash
+export ANTHROPIC_API_KEY=sk-...      # ya OPENAI_API_KEY / GEMINI_API_KEY
+appforge "..." --provider anthropic
+```
 
 ## Options
 
@@ -46,14 +67,16 @@ Key set karte hi AI mode apne aap on ho jata hai. Provider force karna ho to
 appforge "<prompt>" [options]
 
   -o, --out DIR       output directory (default: app ke naam ka folder)
-      --provider P    anthropic | openai | gemini
-      --model M       model override
+      --provider P    ollama | anthropic | openai | gemini
+      --model M       model override (jaise qwen3:4b)
       --offline       AI skip karke templates se banao
       --kind K        offline template type (crud, landing, api, cli, game)
       --run           banane ke baad app chala do
       --dry-run       sirf plan dikhao
       --json          app spec JSON me print karo
       --force         maujood files overwrite karo
+      --strict        AI fail ho to template par mat giro
+      --status        kaunsa AI available hai
       --list-templates
 ```
 

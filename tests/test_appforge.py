@@ -5,7 +5,15 @@ from pathlib import Path
 
 from appforge import ai, naming, templates
 from appforge.cli import main
-from appforge.providers import PROVIDERS, LLMClient, ProviderError, api_key_for, detect_provider
+from appforge.providers import (
+    PROVIDERS,
+    LLMClient,
+    ProviderError,
+    api_key_for,
+    detect_provider,
+    ollama_host,
+    pick_ollama_model,
+)
 from appforge.spec import AppSpec, SpecError
 from appforge.writer import WriteError, safe_target, write_spec
 
@@ -88,8 +96,12 @@ class ProviderTests(unittest.TestCase):
         env = {"OPENAI_API_KEY": "a", "ANTHROPIC_API_KEY": "b", "APPFORGE_PROVIDER": "openai"}
         self.assertEqual(detect_provider(env), "openai")
 
+    def test_detect_falls_back_to_cloud_key(self):
+        env = {"ANTHROPIC_API_KEY": "b"}
+        self.assertEqual(detect_provider(env, probe_local=False), "anthropic")
+
     def test_detect_without_keys(self):
-        self.assertIsNone(detect_provider({}))
+        self.assertIsNone(detect_provider({}, probe_local=False))
 
     def test_gemini_accepts_google_key(self):
         self.assertEqual(api_key_for(PROVIDERS["gemini"], {"GOOGLE_API_KEY": "k"}), "k")
@@ -121,6 +133,27 @@ class ProviderTests(unittest.TestCase):
             client = LLMClient(provider=provider, api_key="secret")
             self.assertEqual(client._extract_text(raw), "hi", provider)
 
+    def test_pick_ollama_model(self):
+        installed = ["llama3.2:3b", "qwen3:4b", "qwen2.5-coder:3b"]
+        self.assertEqual(pick_ollama_model(installed, {}), "qwen2.5-coder:3b")
+        self.assertEqual(pick_ollama_model(["llama3.2:3b"], {}), "llama3.2:3b")
+        self.assertEqual(pick_ollama_model(installed, {"APPFORGE_MODEL": "qwen3"}), "qwen3:4b")
+        self.assertEqual(pick_ollama_model([], {}), PROVIDERS["ollama"].default_model)
+
+    def test_ollama_host_normalisation(self):
+        self.assertEqual(ollama_host({}), "http://localhost:11434")
+        self.assertEqual(ollama_host({"OLLAMA_HOST": "127.0.0.1:1234/"}), "http://127.0.0.1:1234")
+        self.assertEqual(ollama_host({"OLLAMA_HOST": "https://box:99"}), "https://box:99")
+
+    def test_ollama_stream_chunks(self):
+        line = b'{"message": {"role": "assistant", "content": "hi"}, "done": false}'
+        self.assertEqual(LLMClient._ollama_chunk(line), "hi")
+        self.assertEqual(LLMClient._ollama_chunk(b"  "), "")
+        with self.assertRaises(ProviderError):
+            LLMClient._ollama_chunk(b'{"error": "model not found"}')
+        with self.assertRaises(ProviderError):
+            LLMClient._ollama_chunk(b"not json")
+
     def test_extract_text_on_garbage(self):
         client = LLMClient(provider="openai", api_key="secret")
         with self.assertRaises(ProviderError):
@@ -137,13 +170,29 @@ class FakeClient:
         return self.reply
 
 
+class ScriptedClient:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.prompts = []
+
+    def complete(self, system, user):
+        self.prompts.append(user)
+        return self.replies.pop(0)
+
+
+def spec_json(files, **extra):
+    payload = {"name": "demo", "files": [{"path": p, "content": c} for p, c in files]}
+    payload.update(extra)
+    return json.dumps(payload)
+
+
 class AiBuildTests(unittest.TestCase):
     def test_build_spec_from_model_reply(self):
         reply = json.dumps(
             {
                 "name": "chat-app",
                 "description": "demo",
-                "files": [{"path": "index.html", "content": "<h1>hi</h1>"}],
+                "files": [{"path": "index.html", "content": "<h1>hi</h1>" + "<p>chat</p>" * 5}],
                 "run_cmd": "python3 -m http.server",
             }
         )
@@ -152,6 +201,40 @@ class AiBuildTests(unittest.TestCase):
         self.assertEqual(spec.name, "chat-app")
         self.assertEqual(spec.files[0].path, "index.html")
         self.assertIn("ek chat app banao", client.user)
+
+    def test_readme_only_reply_is_retried(self):
+        good = spec_json([("index.html", "<h1>hi</h1>" + "x" * 40)])
+        client = ScriptedClient([spec_json([("README.md", "run it somehow")]), good])
+        spec = ai.build_spec(client, "app banao", "demo")
+        self.assertEqual([f.path for f in spec.files], ["index.html"])
+        self.assertIn("rejected", client.prompts[1])
+
+    def test_gives_up_after_attempts(self):
+        readme_only = spec_json([("README.md", "just docs")])
+        client = ScriptedClient([readme_only, readme_only])
+        with self.assertRaises(SpecError):
+            ai.build_spec(client, "app banao", "demo")
+
+    def test_bogus_npm_commands_are_dropped(self):
+        reply = spec_json(
+            [("index.html", "<h1>hi</h1>" + "x" * 40)],
+            install_cmd="npm install",
+            run_cmd="npm start",
+        )
+        spec = ai.build_spec(ScriptedClient([reply]), "app banao", "demo")
+        self.assertIsNone(spec.install_cmd)
+        self.assertEqual(spec.run_cmd, "python3 -m http.server 8000")
+
+    def test_node_commands_kept_when_package_json_exists(self):
+        reply = spec_json(
+            [("package.json", '{"name": "demo", "scripts": {"start": "node server.js"}}'),
+             ("server.js", "console.log('hi');" + " " * 40)],
+            install_cmd="npm install",
+            run_cmd="npm start",
+        )
+        spec = ai.build_spec(ScriptedClient([reply]), "app banao", "demo")
+        self.assertEqual(spec.install_cmd, "npm install")
+        self.assertEqual(spec.run_cmd, "npm start")
 
 
 class WriterTests(unittest.TestCase):
