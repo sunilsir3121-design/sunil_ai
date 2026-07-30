@@ -158,19 +158,21 @@ class LLMClient:
             return self.config.default_model
         return pick_ollama_model(ollama_models())
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, schema: dict[str, Any] | None = None) -> str:
         if self.provider == "ollama":
-            return self._complete_ollama(system, user)
+            return self._complete_ollama(system, user, schema)
         url, payload, headers = self._request(system, user)
         raw = self._post(url, payload, headers)
         return self._extract_text(raw)
 
-    def _complete_ollama(self, system: str, user: str) -> str:
+    def _complete_ollama(
+        self, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> str:
         """Stream from the local daemon so slow CPU generations show progress."""
         payload = {
             "model": self.model,
             "stream": True,
-            "format": JSON_SCHEMA,
+            "format": schema or JSON_SCHEMA,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

@@ -6,11 +6,13 @@ import json
 import re
 from typing import Any, Protocol
 
-from appforge.spec import AppSpec, SpecError
+from appforge.spec import JSON_SCHEMA, AppSpec, SpecError
 
 
 class ChatClient(Protocol):
-    def complete(self, system: str, user: str) -> str: ...
+    def complete(
+        self, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> str: ...
 
 
 SYSTEM_PROMPT = """You are AppForge, a senior full-stack engineer that turns a single \
@@ -63,7 +65,8 @@ def build_spec(client: ChatClient, prompt: str, name: str, attempts: int = 2) ->
     for attempt in range(max(1, attempts)):
         message = user if attempt == 0 else RETRY_TEMPLATE.format(original=user, problem=last_error)
         try:
-            spec = AppSpec.from_dict(parse_spec_json(client.complete(SYSTEM_PROMPT, message)))
+            reply = client.complete(SYSTEM_PROMPT, message, JSON_SCHEMA)
+            spec = AppSpec.from_dict(parse_spec_json(reply))
             validate_spec(spec)
             return sanitize_commands(spec)
         except SpecError as exc:

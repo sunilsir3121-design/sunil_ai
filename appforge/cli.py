@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from appforge import ai, naming, templates
+from appforge.agent import Agent, AgentError
 from appforge.providers import (
     PROVIDERS,
     LLMClient,
@@ -21,6 +22,7 @@ from appforge.spec import AppSpec, SpecError
 from appforge.writer import WriteError, run_command, write_spec
 
 EXAMPLE = 'appforge "ek todo app banao"'
+AGENT_EXAMPLE = 'appforge agent "flask blog banao aur tests likh ke pass karao"'
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,6 +55,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="AI fail ho to template par mat girna, error do",
+    )
+    return parser
+
+
+def build_agent_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="appforge agent",
+        description="Bada task khud plan karke poora karo: files likho, commands chalao, fix karo.",
+        epilog=f"Example: {AGENT_EXAMPLE}",
+    )
+    parser.add_argument("task", nargs="*", help="pura task apne shabdon me")
+    parser.add_argument("-C", "--workspace", default=".", help="kis folder me kaam karna hai")
+    parser.add_argument("--provider", choices=sorted(PROVIDERS), help="LLM provider")
+    parser.add_argument("--model", help="model name override")
+    parser.add_argument("--max-steps", type=int, default=25, help="zyada se zyada steps")
+    parser.add_argument(
+        "--timeout", type=float, default=300.0, help="ek command ke liye seconds"
+    )
+    parser.add_argument(
+        "--ask",
+        action="store_true",
+        help="har command chalane se pehle poocho",
     )
     return parser
 
@@ -128,7 +152,65 @@ def print_plan(spec: AppSpec, mode: str, out_dir: Path) -> None:
     print()
 
 
+def ask_user(command: str) -> bool:
+    try:
+        answer = input(f"    chalayein? `{command}` [Y/n] ").strip().lower()
+    except EOFError:
+        return True
+    return answer in {"", "y", "yes", "haan", "ha"}
+
+
+def run_agent(argv: list[str]) -> int:
+    args = build_agent_parser().parse_args(argv)
+    task = " ".join(args.task).strip()
+    if not task:
+        print(f"kya karna hai? example: {AGENT_EXAMPLE}", file=sys.stderr)
+        return 2
+
+    provider = args.provider or detect_provider()
+    if provider is None:
+        print(f"error: {OLLAMA_HELP}", file=sys.stderr)
+        return 1
+
+    try:
+        client = make_client(provider, args.model)
+    except ProviderError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    workspace = Path(args.workspace).expanduser().resolve()
+    print(f"agent: {provider} ({client.model})")
+    print(f"kaam: {task}")
+    print(f"folder: {workspace}")
+
+    agent = Agent(
+        client=client,
+        workspace=workspace,
+        max_steps=args.max_steps,
+        command_timeout=args.timeout,
+        approve=ask_user if args.ask else None,
+    )
+    try:
+        run = agent.run(task)
+    except AgentError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nrok diya gaya.", file=sys.stderr)
+        return 130
+
+    failed = [step for step in run.steps if not step.ok]
+    print(f"\n{len(run.steps)} steps, {len(failed)} fail, files: {len(set(run.files_written))}")
+    print(f"summary: {run.summary}")
+    print(f"log: {workspace / '.appforge' / 'agent-log.jsonl'}")
+    return 0 if run.finished else 1
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "agent":
+        return run_agent(argv[1:])
+
     args = build_parser().parse_args(argv)
 
     if args.list_templates:

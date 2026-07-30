@@ -164,9 +164,10 @@ class FakeClient:
     def __init__(self, reply):
         self.reply = reply
 
-    def complete(self, system, user):
+    def complete(self, system, user, schema=None):
         self.system = system
         self.user = user
+        self.schema = schema
         return self.reply
 
 
@@ -175,7 +176,7 @@ class ScriptedClient:
         self.replies = list(replies)
         self.prompts = []
 
-    def complete(self, system, user):
+    def complete(self, system, user, schema=None):
         self.prompts.append(user)
         return self.replies.pop(0)
 

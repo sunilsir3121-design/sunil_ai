@@ -6,6 +6,7 @@ Ek command se koi bhi app bana do.
 appforge "ek todo app banao"
 appforge "snake game banao" --run
 appforge "expenses ke liye REST api banao" -o ~/projects/expenses
+appforge agent "flask blog banao aur tests likhkar pass karao"   # autonomous mode
 ```
 
 AppForge aapke prompt ko ek poore project me badal deta hai — saari files, ek README,
@@ -30,6 +31,31 @@ Sab theek hai ya nahi:
 ```bash
 appforge --status
 ```
+
+## Agent mode — bade task ek command me
+
+```bash
+appforge agent "flask blog banao, sqlite ke saath, aur unittest likhkar pass karao"
+appforge agent "is folder ke code me README aur tests add karo" -C ~/projects/myapp
+```
+
+Ye normal generation se aage hai: agent khud **plan** banata hai, **files likhta hai**,
+**commands chalata hai**, output padhta hai, **errors khud fix karta hai**, aur tab tak
+chalta hai jab tak kaam verify na ho jaye. Har step screen par dikhta hai aur
+`.appforge/agent-log.jsonl` me save hota hai.
+
+Safety (built-in, hamesha on):
+
+- Sirf workspace folder ke andar likh sakta hai — `..` ya `/etc` jaise paths block.
+- Khatarnak commands block: `rm -rf /`, `sudo`, `mkfs`, `shutdown`, `curl | sh`, force push...
+- Har command par timeout, aur `--max-steps` se step limit.
+- `--ask` lagayein to har command chalane se pehle aapse poochega.
+
+Jhooth pakadne ke liye checks: Python file likhte hi syntax check hota hai, "Ran 0 tests"
+ko pass nahi maana jata, aur agent tab tak `finish` nahi kar sakta jab tak usne apna code
+chalakar dikhaya na ho.
+
+Options: `-C DIR`, `--model M`, `--max-steps N`, `--timeout SEC`, `--ask`.
 
 ## Teen modes
 
