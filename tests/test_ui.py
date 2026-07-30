@@ -145,6 +145,41 @@ class HttpTests(unittest.TestCase):
         self.assertFalse(snap["ok"])  # is test me koi model nahi hai
         self.assertTrue(any("Ollama" in line for line in snap["lines"]))
 
+    def test_files_read_save_and_run(self):
+        Path(self.tmp.name, "hello.py").write_text("print('hi')\n")
+
+        with urllib.request.urlopen(f"{self.url}/api/files") as response:
+            files = json.loads(response.read())
+        self.assertEqual(files["files"], ["hello.py"])
+        self.assertEqual(files["root"], self.tmp.name)
+
+        with urllib.request.urlopen(f"{self.url}/api/file?path=hello.py") as response:
+            self.assertEqual(json.loads(response.read())["content"], "print('hi')\n")
+
+        save = urllib.request.Request(
+            f"{self.url}/api/save",
+            data=json.dumps({"path": "hello.py", "content": "print('bye')\n"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(save) as response:
+            self.assertEqual(json.loads(response.read())["saved"], "hello.py")
+
+        run = urllib.request.Request(
+            f"{self.url}/api/run",
+            data=json.dumps({"command": "python3 hello.py"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(run) as response:
+            result = json.loads(response.read())
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["output"].strip(), "bye")
+
+    def test_file_outside_workspace_is_refused(self):
+        with urllib.request.urlopen(f"{self.url}/api/file?path=../../etc/passwd") as response:
+            data = json.loads(response.read())
+        self.assertIn("error", data)
+        self.assertNotIn("content", data)
+
     def test_unknown_job_reports_done(self):
         with urllib.request.urlopen(f"{self.url}/api/log?job=nope&from=0") as response:
             data = json.loads(response.read())

@@ -15,6 +15,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from appforge import ai, naming, templates
+from appforge import workspace as ws
 from appforge.agent import Agent, AgentError
 from appforge.chat import Chat
 from appforge.providers import (
@@ -24,6 +25,7 @@ from appforge.providers import (
     ollama_models,
     pick_ollama_model,
 )
+from appforge.safety import UnsafeAction
 from appforge.spec import SpecError
 from appforge.writer import WriteError, write_spec
 
@@ -36,91 +38,263 @@ PAGE = """<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; display: flex; flex-direction: column;
-    font: 16px/1.6 system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
+    margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    font: 15px/1.6 system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
   }
   header {
-    padding: 14px 20px; border-bottom: 1px solid #1e2430;
-    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid #1e2430;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
-  h1 { font-size: 20px; margin: 0; }
-  .sub { color: #7d8797; font-size: 13px; }
-  main {
-    flex: 1; overflow-y: auto; padding: 22px 16px;
-    display: flex; flex-direction: column; gap: 16px;
+  h1 { font-size: 18px; margin: 0; }
+  .sub { color: #7d8797; font-size: 12px; }
+  #app { flex: 1; display: flex; min-height: 0; }
+  aside {
+    width: 240px; border-right: 1px solid #1e2430; display: flex; flex-direction: column;
+    min-height: 0;
   }
-  .msg { max-width: 780px; width: 100%; margin: 0 auto; }
+  .panel-title {
+    padding: 8px 12px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: #7d8797; display: flex; justify-content: space-between; align-items: center;
+  }
+  .panel-title button { padding: 2px 8px; font-size: 12px; background: #232a36; }
+  #tree { overflow: auto; padding: 0 6px 12px; flex: 1; }
+  #tree div {
+    padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #b9c2d0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #tree div:hover { background: #1b2130; }
+  #tree div.active { background: #24304a; color: #fff; }
+  #center { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #tabs { display: flex; gap: 6px; padding: 8px 12px 0; }
+  .tab {
+    padding: 6px 14px; border-radius: 8px 8px 0 0; background: #161a22; color: #9aa4b2;
+    cursor: pointer; font-size: 13px; border: 1px solid #232a36; border-bottom: 0;
+  }
+  .tab.active { background: #1f2735; color: #fff; }
+  .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pane.hidden { display: none; }
+  #chatlog { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column;
+    gap: 14px; }
+  .msg { max-width: 760px; width: 100%; margin: 0 auto; }
   .who { font-size: 12px; color: #7d8797; margin-bottom: 4px; }
   .body {
-    background: #161a22; border: 1px solid #232a36; border-radius: 12px; padding: 12px 14px;
+    background: #161a22; border: 1px solid #232a36; border-radius: 12px; padding: 10px 14px;
     white-space: pre-wrap; word-break: break-word;
   }
   .me .body { background: #1b2740; border-color: #26365a; }
-  .body code {
-    display: block; font: 13px/1.5 ui-monospace, monospace; color: #9fb3d1;
-    white-space: pre-wrap;
+  .body code, pre {
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
   }
+  .body code { display: block; color: #9fb3d1; }
   .typing { color: #7d8797; }
-  .chips {
-    display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 10px; justify-content: center;
-  }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 8px; justify-content: center; }
   .chip {
-    padding: 6px 12px; border-radius: 999px; background: #1b2130; color: #b9c2d0;
-    cursor: pointer; font-size: 14px; border: 1px solid #2a2f3a;
+    padding: 5px 12px; border-radius: 999px; background: #1b2130; color: #b9c2d0;
+    cursor: pointer; font-size: 13px; border: 1px solid #2a2f3a;
   }
-  form {
-    display: flex; gap: 10px; padding: 12px 16px 18px; border-top: 1px solid #1e2430;
-    max-width: 812px; width: 100%; margin: 0 auto;
-  }
-  textarea, button { font: inherit; }
+  form { display: flex; gap: 10px; padding: 10px 16px 14px; border-top: 1px solid #1e2430; }
+  textarea, input, button { font: inherit; }
   textarea {
-    flex: 1; padding: 12px; border-radius: 12px; resize: none; max-height: 30vh;
+    flex: 1; padding: 10px 12px; border-radius: 10px; resize: none; max-height: 25vh;
     border: 1px solid #2a2f3a; background: #161a22; color: #e6e6e6;
   }
   button {
-    padding: 12px 22px; border-radius: 12px; border: 0; cursor: pointer;
+    padding: 10px 18px; border-radius: 10px; border: 0; cursor: pointer;
     background: #4f7cff; color: #fff; font-weight: 600;
   }
   button:disabled { background: #37415c; cursor: not-allowed; }
+  #editorbar {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid #1e2430;
+  }
+  #editpath { flex: 1; font: 13px ui-monospace, monospace; color: #9fb3d1; }
+  #savemsg { color: #57d38c; font-size: 13px; }
+  #code {
+    flex: 1; width: 100%; border: 0; border-radius: 0; background: #0b0d12; color: #dbe3ee;
+    padding: 14px; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: none;
+    resize: none;
+  }
+  #terminal {
+    height: 34%; min-height: 120px; border-top: 1px solid #1e2430;
+    display: flex; flex-direction: column;
+  }
+  #terminal.closed { height: 38px; }
+  #terminal.closed #termout, #terminal.closed #termform { display: none; }
+  #termout {
+    flex: 1; overflow: auto; margin: 0; padding: 10px 14px; background: #0b0d12;
+    color: #cbd6e6; font-size: 13px;
+  }
+  #termform { border-top: 0; padding: 8px 12px 12px; }
+  #cmd {
+    flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid #2a2f3a;
+    background: #161a22; color: #e6e6e6; font-family: ui-monospace, monospace; font-size: 13px;
+  }
+  .dim { color: #7d8797; }
+  .bad { color: #ff8f8f; }
 </style>
 <header>
   <h1>Forge</h1>
-  <span class="sub">__PROVIDER__ &middot; folder: __OUT__</span>
+  <span class="sub">__PROVIDER__ &middot; __OUT__</span>
 </header>
-<main id="chat">
-  <div class="msg forge"><div class="who">Forge</div><div class="body">Namaste! Main aapke
-computer par hi chalta hoon. Bataiye kya banana hai — ya bas aise hi baat kar lijiye.</div></div>
-</main>
-<div class="chips" id="chips">
-  <span class="chip">ek todo app banao</span>
-  <span class="chip">is folder me tests likhkar pass karao</span>
-  <span class="chip">Python seekhna hai, kahan se shuru karun?</span>
+<div id="app">
+  <aside>
+    <div class="panel-title">Files <button id="refresh">refresh</button></div>
+    <div id="tree"></div>
+  </aside>
+  <section id="center">
+    <div id="tabs">
+      <div class="tab active" data-pane="chatpane">Chat</div>
+      <div class="tab" data-pane="editorpane" id="edittab">Editor</div>
+    </div>
+
+    <div class="pane" id="chatpane">
+      <div id="chatlog">
+        <div class="msg forge"><div class="who">Forge</div><div class="body">Namaste! Sab kuch
+isi PC par chalta hai. Baat kariye, app banwaiye, files kholkar badliye, ya neeche terminal
+me commands chalaiye.</div></div>
+      </div>
+      <div class="chips" id="chips">
+        <span class="chip">ek todo app banao</span>
+        <span class="chip">is folder me tests likhkar pass karao</span>
+        <span class="chip">Python seekhna hai, kahan se shuru karun?</span>
+      </div>
+      <form id="form">
+        <textarea id="text" rows="1"
+          placeholder="kuch bhi likhiye... (Enter bhejne ke liye)"></textarea>
+        <button id="go">Bhejo</button>
+      </form>
+    </div>
+
+    <div class="pane hidden" id="editorpane">
+      <div id="editorbar">
+        <span id="editpath">koi file nahi khuli</span>
+        <span id="savemsg"></span>
+        <button id="save">Save</button>
+      </div>
+      <textarea id="code" spellcheck="false"
+        placeholder="left se koi file kholiye..."></textarea>
+    </div>
+
+    <div id="terminal">
+      <div class="panel-title">Terminal
+        <button id="toggleterm">chhupao</button></div>
+      <pre id="termout" class="dim">yahan command ka output aayega. Try: ls -la</pre>
+      <form id="termform">
+        <input id="cmd" placeholder="command likhiye, jaise: python3 app.py" autocomplete="off">
+        <button>Run</button>
+      </form>
+    </div>
+  </section>
 </div>
-<form id="form">
-  <textarea id="text" rows="1"
-    placeholder="kuch bhi likhiye... (Enter bhejne ke liye, Shift+Enter nayi line)"></textarea>
-  <button id="go">Bhejo</button>
-</form>
 <script>
 const $ = (id) => document.getElementById(id);
-const chat = $('chat');
+const chatlog = $('chatlog');
+let openPath = null;
 
+// ---------- tabs ----------
+document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => showPane(tab.dataset.pane));
+function showPane(id) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('hidden', p.id !== id));
+  document.querySelectorAll('.tab').forEach(
+    t => t.classList.toggle('active', t.dataset.pane === id));
+}
+
+// ---------- file tree ----------
+async function loadTree() {
+  const data = await (await fetch('/api/files')).json();
+  const tree = $('tree');
+  tree.innerHTML = '';
+  if (!data.files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dim';
+    empty.textContent = '(folder khaali hai)';
+    tree.appendChild(empty);
+    return;
+  }
+  data.files.forEach(path => {
+    const item = document.createElement('div');
+    item.textContent = path;
+    item.title = path;
+    if (path === openPath) item.classList.add('active');
+    item.onclick = () => openFile(path);
+    tree.appendChild(item);
+  });
+}
+
+async function openFile(path) {
+  const data = await (await fetch('/api/file?path=' + encodeURIComponent(path))).json();
+  if (data.error) { $('savemsg').textContent = data.error; return; }
+  openPath = path;
+  $('editpath').textContent = path;
+  $('edittab').textContent = path.split('/').pop();
+  $('code').value = data.content;
+  $('savemsg').textContent = '';
+  showPane('editorpane');
+  loadTree();
+}
+
+$('save').onclick = async () => {
+  if (!openPath) return;
+  const res = await fetch('/api/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: openPath, content: $('code').value}),
+  });
+  const data = await res.json();
+  $('savemsg').textContent = data.error ? data.error : 'save ho gaya';
+  setTimeout(() => { $('savemsg').textContent = ''; }, 2500);
+  loadTree();
+};
+
+$('refresh').onclick = loadTree;
+
+// ---------- terminal ----------
+$('toggleterm').onclick = () => {
+  const closed = $('terminal').classList.toggle('closed');
+  $('toggleterm').textContent = closed ? 'dikhao' : 'chhupao';
+};
+
+$('termform').onsubmit = async (e) => {
+  e.preventDefault();
+  const command = $('cmd').value.trim();
+  if (!command) return;
+  $('cmd').value = '';
+  const out = $('termout');
+  out.classList.remove('dim');
+  out.textContent += (out.textContent.trim() && !out.textContent.startsWith('yahan') ? '\\n' : '');
+  if (out.textContent.startsWith('yahan')) out.textContent = '';
+  out.textContent += '$ ' + command + '\\n';
+  out.scrollTop = out.scrollHeight;
+  const res = await fetch('/api/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({command}),
+  });
+  const data = await res.json();
+  let text = data.output || '';
+  if (text && !text.endsWith('\\n')) text += '\\n';
+  out.textContent += text + (data.ok ? '' : '[exit ' + data.code + ']\\n');
+  out.scrollTop = out.scrollHeight;
+  loadTree();
+};
+
+// ---------- chat ----------
 function bubble(who, cls) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + cls;
   wrap.innerHTML = '<div class="who"></div><div class="body"></div>';
   wrap.querySelector('.who').textContent = who;
-  chat.appendChild(wrap);
-  chat.scrollTop = chat.scrollHeight;
+  chatlog.appendChild(wrap);
+  chatlog.scrollTop = chatlog.scrollHeight;
   return wrap.querySelector('.body');
 }
 
 function addLine(body, line) {
-  const isLog = /^(\\s{2,}|\\[|\\||\\$)/.test(line) || line.startsWith('  +');
+  const isLog = /^(\\s{2,}|\\[|\\||\\$)/.test(line);
   const el = document.createElement(isLog ? 'code' : 'div');
   el.textContent = line;
   body.appendChild(el);
-  chat.scrollTop = chat.scrollHeight;
+  chatlog.scrollTop = chatlog.scrollHeight;
 }
 
 document.querySelectorAll('.chip').forEach(c =>
@@ -152,21 +326,24 @@ $('form').onsubmit = async (e) => {
   const {job} = await res.json();
   let seen = 0;
   const timer = setInterval(async () => {
-    const r = await fetch(`/api/log?job=${job}&from=${seen}`);
-    const data = await r.json();
+    const data = await (await fetch(`/api/log?job=${job}&from=${seen}`)).json();
     if (data.lines.length) {
       dots.remove();
       seen += data.lines.length;
       data.lines.forEach(line => addLine(body, line));
+      loadTree();
     }
     if (data.done) {
       clearInterval(timer);
       dots.remove();
       $('go').disabled = false;
       $('text').focus();
+      loadTree();
     }
   }, 800);
 };
+
+loadTree();
 </script>
 </html>
 """
@@ -253,6 +430,18 @@ class Runner:
         else:
             self.chat.printer = job.write
         return self.chat
+
+    def files(self) -> list[str]:
+        return ws.list_files(self.workspace)
+
+    def read_file(self, path: str) -> str:
+        return ws.read_file(self.workspace, path)
+
+    def save_file(self, path: str, content: str) -> str:
+        return str(ws.save_file(self.workspace, path, content).relative_to(self.workspace))
+
+    def run_command(self, command: str) -> ws.CommandResult:
+        return ws.run(self.workspace, command)
 
     def start(self, prompt: str, mode: str, out: str) -> str:
         self._next_id += 1
@@ -345,6 +534,16 @@ def make_handler(runner: Runner, page: str) -> type[BaseHTTPRequestHandler]:
             if url.path == "/":
                 self._send(page.encode("utf-8"), "text/html; charset=utf-8")
                 return
+            if url.path == "/api/files":
+                self._json({"files": runner.files(), "root": str(runner.workspace)})
+                return
+            if url.path == "/api/file":
+                path = parse_qs(url.query).get("path", [""])[0]
+                try:
+                    self._json({"path": path, "content": runner.read_file(path)})
+                except (UnsafeAction, FileNotFoundError, ValueError, OSError) as exc:
+                    self._json({"path": path, "error": str(exc)})
+                return
             if url.path == "/api/log":
                 query = parse_qs(url.query)
                 job = runner.jobs.get(query.get("job", [""])[0])
@@ -358,7 +557,7 @@ def make_handler(runner: Runner, page: str) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:  # noqa: N802 - http.server API
             path = urlparse(self.path).path
-            if path not in {"/api/start", "/api/chat"}:
+            if path not in {"/api/start", "/api/chat", "/api/save", "/api/run"}:
                 self.send_error(404)
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -369,6 +568,20 @@ def make_handler(runner: Runner, page: str) -> type[BaseHTTPRequestHandler]:
                 return
             if path == "/api/chat":
                 self._json({"job": runner.start_chat(str(data.get("text", "")).strip())})
+                return
+            if path == "/api/save":
+                try:
+                    saved = runner.save_file(
+                        str(data.get("path", "")), str(data.get("content", ""))
+                    )
+                except (UnsafeAction, OSError) as exc:
+                    self._json({"error": str(exc)})
+                    return
+                self._json({"saved": saved})
+                return
+            if path == "/api/run":
+                result = runner.run_command(str(data.get("command", "")))
+                self._json({"code": result.code, "output": result.output, "ok": result.ok})
                 return
             job_id = runner.start(
                 str(data.get("prompt", "")).strip(),

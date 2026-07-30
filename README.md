@@ -53,6 +53,15 @@ English, jis me aap likhein. Aur jab kaam ki baat ho to sirf batata nahi, **kart
 Har step chat me live dikhta hai. Kaam aapke folder (default `~/AppForge`, `-o` se badlein)
 ke andar hi hota hai, aur server sirf `127.0.0.1` par sunta hai — sab kuch aapke PC par.
 
+Browser wala page poora workbench hai — sab kuch dekh bhi sakte hain aur likh bhi:
+
+- **Files** (left): folder ki saari files; click karte hi khul jati hain.
+- **Editor**: file me khud change karo aur **Save** — seedha disk par likh jata hai.
+- **Terminal** (neeche): `ls`, `python3 app.py`, `pytest` — jo chahe chalao, output wahin dikhega.
+  Khatarnak commands (`sudo`, `rm -rf /`...) yahan bhi block hain, aur sab kuch workspace
+  folder ke andar hi chalta hai.
+- **Chat**: jo bhi Forge banata ya badalta hai, file list turant refresh ho jati hai.
+
 Options: `--port N`, `-o DIR`, `--model M`, `--no-browser` (aur `appforge chat -C DIR`).
 
 ## Agent mode — bade task ek command me
