@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from appforge import ai, naming, templates
 from appforge.agent import Agent, AgentError
+from appforge.chat import Chat
 from appforge.providers import (
     PROVIDERS,
     ProviderError,
@@ -34,104 +35,137 @@ PAGE = """<!doctype html>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1115; color: #e6e6e6; }
-  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 26px; margin: 0 0 4px; }
-  p.sub { margin: 0 0 20px; color: #9aa4b2; }
-  textarea, input, select, button { font: inherit; }
-  textarea {
-    width: 100%; min-height: 92px; padding: 12px; border-radius: 10px;
-    border: 1px solid #2a2f3a; background: #161a22; color: #e6e6e6; resize: vertical;
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font: 16px/1.6 system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
   }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
-  .row label { color: #9aa4b2; }
-  input[type=text] {
-    flex: 1; min-width: 220px; padding: 10px 12px; border-radius: 10px;
-    border: 1px solid #2a2f3a; background: #161a22; color: #e6e6e6;
+  header {
+    padding: 14px 20px; border-bottom: 1px solid #1e2430;
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   }
-  button {
-    padding: 12px 22px; border-radius: 10px; border: 0; cursor: pointer;
-    background: #4f7cff; color: #fff; font-weight: 600;
+  h1 { font-size: 20px; margin: 0; }
+  .sub { color: #7d8797; font-size: 13px; }
+  main {
+    flex: 1; overflow-y: auto; padding: 22px 16px;
+    display: flex; flex-direction: column; gap: 16px;
   }
-  button:disabled { background: #37415c; cursor: not-allowed; }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .msg { max-width: 780px; width: 100%; margin: 0 auto; }
+  .who { font-size: 12px; color: #7d8797; margin-bottom: 4px; }
+  .body {
+    background: #161a22; border: 1px solid #232a36; border-radius: 12px; padding: 12px 14px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .me .body { background: #1b2740; border-color: #26365a; }
+  .body code {
+    display: block; font: 13px/1.5 ui-monospace, monospace; color: #9fb3d1;
+    white-space: pre-wrap;
+  }
+  .typing { color: #7d8797; }
+  .chips {
+    display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 10px; justify-content: center;
+  }
   .chip {
     padding: 6px 12px; border-radius: 999px; background: #1b2130; color: #b9c2d0;
     cursor: pointer; font-size: 14px; border: 1px solid #2a2f3a;
   }
-  pre {
-    background: #0b0d12; border: 1px solid #2a2f3a; border-radius: 10px; padding: 14px;
-    min-height: 220px; max-height: 55vh; overflow: auto; white-space: pre-wrap;
-    word-break: break-word; font-size: 14px;
+  form {
+    display: flex; gap: 10px; padding: 12px 16px 18px; border-top: 1px solid #1e2430;
+    max-width: 812px; width: 100%; margin: 0 auto;
   }
-  .status { margin: 10px 0; color: #9aa4b2; }
-  .ok { color: #57d38c; } .bad { color: #ff7a7a; }
+  textarea, button { font: inherit; }
+  textarea {
+    flex: 1; padding: 12px; border-radius: 12px; resize: none; max-height: 30vh;
+    border: 1px solid #2a2f3a; background: #161a22; color: #e6e6e6;
+  }
+  button {
+    padding: 12px 22px; border-radius: 12px; border: 0; cursor: pointer;
+    background: #4f7cff; color: #fff; font-weight: 600;
+  }
+  button:disabled { background: #37415c; cursor: not-allowed; }
 </style>
-<main>
-  <h1>AppForge</h1>
-  <p class="sub">Hindi/English me likhiye, app ban jayega. Sab kuch aapke PC par — __PROVIDER__</p>
-
-  <div class="chips">
-    <span class="chip">ek todo app banao</span>
-    <span class="chip">ek calculator web app banao</span>
-    <span class="chip">ek notes REST API banao</span>
-    <span class="chip">ek portfolio landing page banao</span>
-  </div>
-
-  <textarea id="prompt"
-    placeholder="jaise: ek todo app banao jisme task add aur delete ho"></textarea>
-
-  <div class="row">
-    <label><input type="radio" name="mode" value="app" checked> App banao (tez)</label>
-    <label><input type="radio" name="mode" value="agent">
-      Agent — bada kaam (files + tests + fix)</label>
-  </div>
-  <div class="row">
-    <label for="out">Folder</label>
-    <input type="text" id="out" value="__OUT__">
-    <button id="go">Banao</button>
-  </div>
-
-  <div class="status" id="status">taiyaar</div>
-  <pre id="log">yahan live progress dikhega...</pre>
+<header>
+  <h1>Forge</h1>
+  <span class="sub">__PROVIDER__ &middot; folder: __OUT__</span>
+</header>
+<main id="chat">
+  <div class="msg forge"><div class="who">Forge</div><div class="body">Namaste! Main aapke
+computer par hi chalta hoon. Bataiye kya banana hai — ya bas aise hi baat kar lijiye.</div></div>
 </main>
+<div class="chips" id="chips">
+  <span class="chip">ek todo app banao</span>
+  <span class="chip">is folder me tests likhkar pass karao</span>
+  <span class="chip">Python seekhna hai, kahan se shuru karun?</span>
+</div>
+<form id="form">
+  <textarea id="text" rows="1"
+    placeholder="kuch bhi likhiye... (Enter bhejne ke liye, Shift+Enter nayi line)"></textarea>
+  <button id="go">Bhejo</button>
+</form>
 <script>
 const $ = (id) => document.getElementById(id);
-let timer = null;
+const chat = $('chat');
+
+function bubble(who, cls) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + cls;
+  wrap.innerHTML = '<div class="who"></div><div class="body"></div>';
+  wrap.querySelector('.who').textContent = who;
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+  return wrap.querySelector('.body');
+}
+
+function addLine(body, line) {
+  const isLog = /^(\\s{2,}|\\[|\\||\\$)/.test(line) || line.startsWith('  +');
+  const el = document.createElement(isLog ? 'code' : 'div');
+  el.textContent = line;
+  body.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
 
 document.querySelectorAll('.chip').forEach(c =>
-  c.onclick = () => { $('prompt').value = c.textContent; });
+  c.onclick = () => { $('text').value = c.textContent; $('text').focus(); });
 
-$('go').onclick = async () => {
-  const prompt = $('prompt').value.trim();
-  if (!prompt) { $('status').textContent = 'pehle likhiye kya banana hai'; return; }
+$('text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit(); }
+});
+
+$('form').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $('text').value.trim();
+  if (!text) return;
+  $('chips').style.display = 'none';
+  $('text').value = '';
   $('go').disabled = true;
-  $('log').textContent = '';
-  $('status').textContent = 'chal raha hai... (local model soch raha hai)';
-  const mode = document.querySelector('input[name=mode]:checked').value;
-  const res = await fetch('/api/start', {
+  addLine(bubble('Aap', 'me'), text);
+  const body = bubble('Forge', 'forge');
+  const dots = document.createElement('div');
+  dots.className = 'typing';
+  dots.textContent = 'soch raha hoon...';
+  body.appendChild(dots);
+
+  const res = await fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({prompt, mode, out: $('out').value.trim()}),
+    body: JSON.stringify({text}),
   });
   const {job} = await res.json();
   let seen = 0;
-  timer = setInterval(async () => {
+  const timer = setInterval(async () => {
     const r = await fetch(`/api/log?job=${job}&from=${seen}`);
     const data = await r.json();
     if (data.lines.length) {
+      dots.remove();
       seen += data.lines.length;
-      $('log').textContent += data.lines.join('\\n') + '\\n';
-      $('log').scrollTop = $('log').scrollHeight;
+      data.lines.forEach(line => addLine(body, line));
     }
     if (data.done) {
       clearInterval(timer);
+      dots.remove();
       $('go').disabled = false;
-      $('status').innerHTML = data.ok
-        ? '<span class="ok">ho gaya:</span> ' + data.summary
-        : '<span class="bad">gadbad:</span> ' + data.summary;
+      $('text').focus();
     }
-  }, 900);
+  }, 800);
 };
 </script>
 </html>
@@ -169,13 +203,56 @@ class Job:
 
 
 class Runner:
-    """UI se aane wale kaam chalata hai (generate ya agent)."""
+    """UI se aane wale kaam chalata hai (chat, generate ya agent)."""
 
-    def __init__(self, model: str | None = None, provider: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        provider: str | None = None,
+        workspace: Path | None = None,
+    ) -> None:
         self.model = model
         self.provider = provider
+        self.workspace = workspace or Path.home() / "AppForge"
         self.jobs: dict[str, Job] = {}
+        self.chat: Chat | None = None
         self._next_id = 0
+
+    def start_chat(self, text: str) -> str:
+        """Ek chat turn background me chalao."""
+        self._next_id += 1
+        job_id = str(self._next_id)
+        job = Job()
+        self.jobs[job_id] = job
+        threading.Thread(target=self._chat_turn, args=(job, text), daemon=True).start()
+        return job_id
+
+    def _chat_turn(self, job: Job, text: str) -> None:
+        try:
+            chat = self._conversation(job)
+            if chat is None:
+                job.finish(False, "model nahi mila")
+                return
+            turn = chat.send(text)
+            job.finish(turn.ok, turn.detail or turn.reply)
+        except (ProviderError, SpecError, WriteError, AgentError, OSError) as exc:
+            job.write(f"gadbad ho gayi: {exc}")
+            job.finish(False, str(exc))
+
+    def _conversation(self, job: Job) -> Chat | None:
+        if self.chat is None:
+            client = self._client(job)
+            if client is None:
+                job.write(
+                    "baat karne ke liye local model chahiye. Ollama chalu karein: "
+                    "`ollama serve` aur `ollama pull qwen2.5-coder:3b`."
+                )
+                return None
+            self.workspace.mkdir(parents=True, exist_ok=True)
+            self.chat = Chat(client=client, workspace=self.workspace, printer=job.write)
+        else:
+            self.chat.printer = job.write
+        return self.chat
 
     def start(self, prompt: str, mode: str, out: str) -> str:
         self._next_id += 1
@@ -280,7 +357,8 @@ def make_handler(runner: Runner, page: str) -> type[BaseHTTPRequestHandler]:
             self.send_error(404)
 
         def do_POST(self) -> None:  # noqa: N802 - http.server API
-            if urlparse(self.path).path != "/api/start":
+            path = urlparse(self.path).path
+            if path not in {"/api/start", "/api/chat"}:
                 self.send_error(404)
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -288,6 +366,9 @@ def make_handler(runner: Runner, page: str) -> type[BaseHTTPRequestHandler]:
                 data = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
                 self.send_error(400)
+                return
+            if path == "/api/chat":
+                self._json({"job": runner.start_chat(str(data.get("text", "")).strip())})
                 return
             job_id = runner.start(
                 str(data.get("prompt", "")).strip(),
@@ -322,7 +403,7 @@ def serve(
 ) -> None:
     """Local UI chalao (Ctrl+C se band)."""
     target = out_dir or Path.home() / "AppForge"
-    runner = Runner(model=model, provider=provider)
+    runner = Runner(model=model, provider=provider, workspace=target)
     server = ThreadingHTTPServer((host, port), make_handler(runner, render_page(target)))
     url = f"http://{host}:{port}"
     printer(f"AppForge UI: {url}  (band karne ke liye Ctrl+C)")

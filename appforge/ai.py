@@ -105,6 +105,7 @@ def sanitize_commands(spec: AppSpec) -> AppSpec:
             spec.install_cmd = None
 
     if spec.run_cmd:
+        spec.run_cmd = _runnable(spec.run_cmd)
         first = spec.run_cmd.split()[0]
         broken_node = first in NODE_COMMANDS and not has_node
         opens_file = first in {"open", "xdg-open", "start"}
@@ -115,6 +116,14 @@ def sanitize_commands(spec: AppSpec) -> AppSpec:
             spec.run_cmd = None
 
     return spec
+
+
+def _runnable(command: str) -> str:
+    """`./app.py` jaisa command chalta nahi (koi +x bit nahi) — `python3 app.py` bana do."""
+    first, _, rest = command.partition(" ")
+    if first.startswith("./") and first.endswith(".py"):
+        return f"python3 {first[2:]} {rest}".strip()
+    return command
 
 
 def parse_spec_json(text: str) -> dict[str, Any]:

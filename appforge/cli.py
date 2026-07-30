@@ -9,6 +9,7 @@ from pathlib import Path
 
 from appforge import ai, naming, templates
 from appforge.agent import Agent, AgentError
+from appforge.chat import Chat
 from appforge.providers import (
     PROVIDERS,
     LLMClient,
@@ -25,13 +26,17 @@ from appforge.writer import WriteError, run_command, write_spec
 EXAMPLE = 'appforge "ek todo app banao"'
 AGENT_EXAMPLE = 'appforge agent "flask blog banao aur tests likh ke pass karao"'
 UI_EXAMPLE = "appforge ui"
+CHAT_EXAMPLE = "appforge chat"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="appforge",
         description="Ek command se koi bhi app banao (AI ya offline templates se).",
-        epilog=f"Examples: {EXAMPLE} | {AGENT_EXAMPLE} | {UI_EXAMPLE} (browser UI)",
+        epilog=(
+            f"Examples: {EXAMPLE} | {AGENT_EXAMPLE} | "
+            f"{UI_EXAMPLE} (browser chat) | {CHAT_EXAMPLE} (terminal chat)"
+        ),
     )
     parser.add_argument("prompt", nargs="*", help="kya banana hai, apne shabdon me")
     parser.add_argument("-o", "--out", help="output directory (default: app ka naam)")
@@ -96,6 +101,54 @@ def build_ui_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="model name override")
     parser.add_argument("--no-browser", action="store_true", help="browser khud mat kholo")
     return parser
+
+
+def build_chat_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="appforge chat",
+        description="Baat karo — aur jo kehna hai wo bana bhi lo (terminal me).",
+        epilog=f"Example: {CHAT_EXAMPLE}",
+    )
+    parser.add_argument("-C", "--workspace", default=".", help="kis folder me kaam karna hai")
+    parser.add_argument("--provider", choices=sorted(PROVIDERS), help="LLM provider")
+    parser.add_argument("--model", help="model name override")
+    return parser
+
+
+def run_chat(argv: list[str]) -> int:
+    args = build_chat_parser().parse_args(argv)
+    provider = args.provider or detect_provider()
+    if provider is None:
+        print(f"error: {OLLAMA_HELP}", file=sys.stderr)
+        return 1
+    try:
+        client = make_client(provider, args.model)
+    except ProviderError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    workspace = Path(args.workspace).expanduser().resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    chat = Chat(client=client, workspace=workspace)
+    print(f"Forge ({client.model}) — folder: {workspace}")
+    print("kuch bhi poochho ya bolo kya banana hai. Nikalne ke liye Ctrl+C ya 'bye'.\n")
+
+    while True:
+        try:
+            text = input("aap> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nchalta hoon, milte hain!")
+            return 0
+        if text.lower() in {"bye", "exit", "quit", "alvida"}:
+            print("chalta hoon, milte hain!")
+            return 0
+        if not text:
+            continue
+        try:
+            chat.send(text)
+        except KeyboardInterrupt:
+            print("\nrok diya.")
+        print()
 
 
 def run_ui(argv: list[str]) -> int:
@@ -242,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_agent(argv[1:])
     if argv and argv[0] == "ui":
         return run_ui(argv[1:])
+    if argv and argv[0] == "chat":
+        return run_chat(argv[1:])
 
     args = build_parser().parse_args(argv)
 

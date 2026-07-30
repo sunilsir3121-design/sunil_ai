@@ -50,6 +50,35 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(any(out_dir.iterdir()))
             self.assertTrue(any("chalane ke liye" in line for line in snap["lines"]))
 
+    def test_chat_without_model_says_what_to_do(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Runner(workspace=Path(tmp))
+            runner._client = lambda job: None
+            job_id = runner.start_chat("namaste")
+            snap = wait_for(runner.jobs[job_id])
+
+            self.assertFalse(snap["ok"])
+            self.assertTrue(any("Ollama" in line for line in snap["lines"]), snap["lines"])
+
+    def test_chat_turn_streams_reply(self):
+        replies = [json.dumps({"reply": "namaste! kya banana hai?", "mode": "baat"})]
+
+        class Model:
+            model = "fake"
+
+            def complete(self, system, user, schema=None):
+                return replies.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Runner(workspace=Path(tmp))
+            runner._client = lambda job: Model()
+            job_id = runner.start_chat("namaste")
+            snap = wait_for(runner.jobs[job_id])
+
+            self.assertTrue(snap["ok"], snap["lines"])
+            self.assertEqual(snap["lines"], ["namaste! kya banana hai?"])
+            self.assertIsNotNone(runner.chat)
+
     def test_agent_needs_local_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = Runner()
@@ -67,7 +96,7 @@ class HttpTests(unittest.TestCase):
         from threading import Thread
 
         self.tmp = tempfile.TemporaryDirectory()
-        self.runner = Runner()
+        self.runner = Runner(workspace=Path(self.tmp.name))
         self.runner._client = lambda job: None
         handler = make_handler(self.runner, render_page(Path(self.tmp.name)))
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -103,6 +132,18 @@ class HttpTests(unittest.TestCase):
         self.assertTrue(data["done"])
         self.assertTrue(data["ok"], data["lines"])
         self.assertTrue(Path(data["summary"]).is_dir())
+
+    def test_chat_endpoint_starts_job(self):
+        payload = json.dumps({"text": "namaste"}).encode()
+        request = urllib.request.Request(
+            f"{self.url}/api/chat", data=payload, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(request) as response:
+            job_id = json.loads(response.read())["job"]
+
+        snap = wait_for(self.runner.jobs[job_id])
+        self.assertFalse(snap["ok"])  # is test me koi model nahi hai
+        self.assertTrue(any("Ollama" in line for line in snap["lines"]))
 
     def test_unknown_job_reports_done(self):
         with urllib.request.urlopen(f"{self.url}/api/log?job=nope&from=0") as response:

@@ -7,7 +7,8 @@ appforge "ek todo app banao"
 appforge "snake game banao" --run
 appforge "expenses ke liye REST api banao" -o ~/projects/expenses
 appforge agent "flask blog banao aur tests likhkar pass karao"   # autonomous mode
-appforge ui                                                      # browser UI
+appforge ui                                                      # browser me chat
+appforge chat                                                    # terminal me chat
 ```
 
 AppForge aapke prompt ko ek poore project me badal deta hai — saari files, ek README,
@@ -33,17 +34,26 @@ Sab theek hai ya nahi:
 appforge --status
 ```
 
-## Browser UI — terminal ke bina
+## Chat — bas baat kariye
 
 ```bash
-appforge ui        # http://127.0.0.1:7788 apne aap khul jayega
+appforge ui          # browser me chat (http://127.0.0.1:7788 apne aap khulta hai)
+appforge chat        # wahi cheez terminal me
 ```
 
-Ek page milta hai: Hindi me likhiye "ek todo app banao", **Banao** dabaiye, live progress dikhega
-aur app aapke folder (default `~/AppForge`) me ban jayega. Wahin se **Agent mode** bhi chun sakte
-hain. Server sirf `127.0.0.1` par sunta hai — sab kuch aapke PC par.
+Aap normal bhasha me likhiye, Forge normal bhasha me jawab deta hai — Hindi, Hinglish ya
+English, jis me aap likhein. Aur jab kaam ki baat ho to sirf batata nahi, **karta bhi hai**:
 
-Options: `--port N`, `-o DIR`, `--model M`, `--no-browser`.
+| Aap likhte hain                                | Forge kya karta hai                             |
+| ---------------------------------------------- | ----------------------------------------------- |
+| "tum kaun ho?", "python kahan se seekhun?"      | bas jawab deta hai, koi file nahi banti          |
+| "ek dice roller page bana do"                   | poora app likh deta hai aur chalane ki command deta hai |
+| "is folder me tests likhkar pass karao"         | agent chalu — files likhta, commands chalata, errors khud fix karta hai |
+
+Har step chat me live dikhta hai. Kaam aapke folder (default `~/AppForge`, `-o` se badlein)
+ke andar hi hota hai, aur server sirf `127.0.0.1` par sunta hai — sab kuch aapke PC par.
+
+Options: `--port N`, `-o DIR`, `--model M`, `--no-browser` (aur `appforge chat -C DIR`).
 
 ## Agent mode — bade task ek command me
 
