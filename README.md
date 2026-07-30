@@ -7,6 +7,7 @@ appforge "ek todo app banao"
 appforge "snake game banao" --run
 appforge "expenses ke liye REST api banao" -o ~/projects/expenses
 appforge agent "flask blog banao aur tests likhkar pass karao"   # autonomous mode
+appforge ui                                                      # browser UI
 ```
 
 AppForge aapke prompt ko ek poore project me badal deta hai — saari files, ek README,
@@ -31,6 +32,18 @@ Sab theek hai ya nahi:
 ```bash
 appforge --status
 ```
+
+## Browser UI — terminal ke bina
+
+```bash
+appforge ui        # http://127.0.0.1:7788 apne aap khul jayega
+```
+
+Ek page milta hai: Hindi me likhiye "ek todo app banao", **Banao** dabaiye, live progress dikhega
+aur app aapke folder (default `~/AppForge`) me ban jayega. Wahin se **Agent mode** bhi chun sakte
+hain. Server sirf `127.0.0.1` par sunta hai — sab kuch aapke PC par.
+
+Options: `--port N`, `-o DIR`, `--model M`, `--no-browser`.
 
 ## Agent mode — bade task ek command me
 

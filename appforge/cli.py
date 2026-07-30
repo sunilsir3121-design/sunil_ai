@@ -19,17 +19,19 @@ from appforge.providers import (
     ollama_models,
 )
 from appforge.spec import AppSpec, SpecError
+from appforge.ui import serve
 from appforge.writer import WriteError, run_command, write_spec
 
 EXAMPLE = 'appforge "ek todo app banao"'
 AGENT_EXAMPLE = 'appforge agent "flask blog banao aur tests likh ke pass karao"'
+UI_EXAMPLE = "appforge ui"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="appforge",
         description="Ek command se koi bhi app banao (AI ya offline templates se).",
-        epilog=f"Example: {EXAMPLE}",
+        epilog=f"Examples: {EXAMPLE} | {AGENT_EXAMPLE} | {UI_EXAMPLE} (browser UI)",
     )
     parser.add_argument("prompt", nargs="*", help="kya banana hai, apne shabdon me")
     parser.add_argument("-o", "--out", help="output directory (default: app ka naam)")
@@ -79,6 +81,34 @@ def build_agent_parser() -> argparse.ArgumentParser:
         help="har command chalane se pehle poocho",
     )
     return parser
+
+
+def build_ui_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="appforge ui",
+        description="Browser me AppForge chalao — terminal ki zaroorat nahi.",
+        epilog=f"Example: {UI_EXAMPLE}",
+    )
+    parser.add_argument("--port", type=int, default=7788, help="kis port par (default 7788)")
+    parser.add_argument("--host", default="127.0.0.1", help="default: sirf isi PC par")
+    parser.add_argument("-o", "--out", help="apps kahan banein (default ~/AppForge)")
+    parser.add_argument("--provider", choices=sorted(PROVIDERS), help="LLM provider")
+    parser.add_argument("--model", help="model name override")
+    parser.add_argument("--no-browser", action="store_true", help="browser khud mat kholo")
+    return parser
+
+
+def run_ui(argv: list[str]) -> int:
+    args = build_ui_parser().parse_args(argv)
+    serve(
+        host=args.host,
+        port=args.port,
+        out_dir=Path(args.out).expanduser().resolve() if args.out else None,
+        model=args.model,
+        provider=args.provider,
+        open_browser=not args.no_browser,
+    )
+    return 0
 
 
 OLLAMA_HELP = (
@@ -210,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "agent":
         return run_agent(argv[1:])
+    if argv and argv[0] == "ui":
+        return run_ui(argv[1:])
 
     args = build_parser().parse_args(argv)
 
